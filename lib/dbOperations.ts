@@ -31,8 +31,8 @@ export async function retrieveFromMySQL(page: number = 1, pageSize: number = 50,
     const [countResult] = await connection.execute(
       `SELECT COUNT(*) as total FROM your_table ${searchQuery}`,
       searchParams
-    );
-    const total = (countResult as any)[0].total;
+    ) as [mysql.RowDataPacket[], mysql.FieldPacket[]];
+    const total = countResult[0].total;
     return { data: rows, total };
   } catch (error) {
     console.error('Error retrieving data from MySQL:', error);
