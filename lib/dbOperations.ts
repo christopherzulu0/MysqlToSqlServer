@@ -19,12 +19,21 @@ export async function storeInMySQL(pk: number, imagePath: string) {
   }
 }
 
-export async function retrieveFromMySQL() {
+export async function retrieveFromMySQL(page: number = 1, pageSize: number = 50, search: string = '') {
   let connection;
   try {
     connection = await mysql.createConnection(mysqlConfig);
-    const [rows] = await connection.execute('SELECT pk, image FROM your_table');
-    return rows;
+    const offset = (page - 1) * pageSize;
+    const searchQuery = search ? `WHERE pk LIKE ? OR image LIKE ?` : '';
+    const searchParams = search ? [`%${search}%`, `%${search}%`] : [];
+    const query = `SELECT pk, image FROM your_table ${searchQuery} LIMIT ${pageSize} OFFSET ${offset}`;
+    const [rows] = await connection.execute(query, searchParams);
+    const [countResult] = await connection.execute(
+      `SELECT COUNT(*) as total FROM your_table ${searchQuery}`,
+      searchParams
+    );
+    const total = (countResult as any)[0].total;
+    return { data: rows, total };
   } catch (error) {
     console.error('Error retrieving data from MySQL:', error);
     throw error;
@@ -83,11 +92,20 @@ export async function pushToSQLServer(data: Array<{pk: number, image: string}>) 
   }
 }
 
-export async function retrieveFromSQLServer() {
+export async function retrieveFromSQLServer(page: number = 1, pageSize: number = 50) {
   try {
     await sql.connect(sqlServerConfig);
-    const result = await sql.query`SELECT pk, image FROM your_table`;
-    return result.recordset;
+    const offset = (page - 1) * pageSize;
+    const result = await sql.query`
+      SELECT pk, image
+      FROM your_table
+      ORDER BY pk
+      OFFSET ${offset} ROWS
+      FETCH NEXT ${pageSize} ROWS ONLY;
+
+      SELECT COUNT(*) as total FROM your_table;
+    `;
+    return { data: result.recordsets[0], total: result.recordsets[1][0].total };
   } catch (error) {
     console.error('Error retrieving data from SQL Server:', error);
     throw error;
@@ -95,4 +113,5 @@ export async function retrieveFromSQLServer() {
     await sql.close();
   }
 }
+
 

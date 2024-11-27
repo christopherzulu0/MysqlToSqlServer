@@ -1,18 +1,35 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { AlertCircle, CheckCircle, Loader2 } from 'lucide-react'
+import { AlertCircle, CheckCircle, Loader2, Search } from 'lucide-react'
 import { Textarea } from "@/components/ui/textarea"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import useSWR from 'swr'
 
 interface DataItem {
   pk: number;
   image: string;
+}
+
+interface PaginatedResponse {
+  data: DataItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+const fetcher = async (url: string) => {
+  const response = await fetch(url);
+  if (!response.ok) {
+    const errorData = await response.json();
+    throw new Error(errorData.error || 'Failed to fetch data');
+  }
+  return response.json();
 }
 
 export default function Home() {
@@ -20,10 +37,23 @@ export default function Home() {
   const [imagePath, setImagePath] = useState('')
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
-  const [mysqlData, setMysqlData] = useState<DataItem[]>([])
-  const [sqlServerData, setSqlServerData] = useState<DataItem[]>([])
   const [isStoringMySQL, setIsStoringMySQL] = useState(false)
   const [isPushingToSQLServer, setIsPushingToSQLServer] = useState(false)
+  const [mysqlPage, setMysqlPage] = useState(1)
+  const [sqlServerPage, setSqlServerPage] = useState(1)
+  const pageSize = 50
+  const [mysqlSearch, setMysqlSearch] = useState('')
+  const [sqlServerSearch, setSqlServerSearch] = useState('')
+
+  const { data: mysqlData, error: mysqlError, mutate: mutateMysql } = useSWR<PaginatedResponse>(
+    `/api/retrieve-mysql?page=${mysqlPage}&pageSize=${pageSize}&search=${encodeURIComponent(mysqlSearch)}`,
+    fetcher
+  )
+
+  const { data: sqlServerData, error: sqlServerError, mutate: mutateSqlServer } = useSWR<PaginatedResponse>(
+    `/api/retrieve-sqlserver?page=${sqlServerPage}&pageSize=${pageSize}&search=${encodeURIComponent(sqlServerSearch)}`,
+    fetcher
+  )
 
   const handleStore = async () => {
     setMessage('');
@@ -40,7 +70,7 @@ export default function Home() {
         throw new Error(data.error || 'Failed to store data');
       }
       setMessage(data.message);
-      fetchData();
+      mutateMysql();
     } catch (error) {
       setError(error instanceof Error ? error.message : 'An unknown error occurred');
       console.error('Error storing data:', error);
@@ -64,7 +94,7 @@ export default function Home() {
       const pushResponse = await fetch('/api/push-sqlserver', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(retrievedData)
+        body: JSON.stringify(retrievedData.data)
       })
       if (!pushResponse.ok) {
         const errorData = await pushResponse.json();
@@ -72,7 +102,8 @@ export default function Home() {
       }
       const pushData = await pushResponse.json()
       setMessage(pushData.message);
-      fetchData();
+      mutateMysql();
+      mutateSqlServer();
     } catch (error) {
       setError(error instanceof Error ? error.message : 'An unknown error occurred');
       console.error('Error in retrieve and push operation:', error);
@@ -81,24 +112,26 @@ export default function Home() {
     }
   }
 
-  const fetchData = async () => {
-    try {
-      const mysqlResponse = await fetch('/api/retrieve-mysql');
-      const mysqlData = await mysqlResponse.json();
-      setMysqlData(mysqlData);
+  const renderPagination = useCallback((currentPage: number, totalItems: number, onPageChange: (page: number) => void) => {
+    const totalPages = Math.ceil(totalItems / pageSize);
+    return (
+      <div className="flex justify-center space-x-2 mt-4">
+        <Button onClick={() => onPageChange(currentPage - 1)} disabled={currentPage === 1}>Previous</Button>
+        <span className="self-center">{`Page ${currentPage} of ${totalPages}`}</span>
+        <Button onClick={() => onPageChange(currentPage + 1)} disabled={currentPage === totalPages}>Next</Button>
+      </div>
+    );
+  }, [pageSize]);
 
-      const sqlServerResponse = await fetch('/api/retrieve-sqlserver');
-      const sqlServerData = await sqlServerResponse.json();
-      setSqlServerData(sqlServerData);
-    } catch (error) {
-      console.error('Error fetching data:', error);
-      setError('Failed to fetch data from databases');
+  const handleSearch = (database: 'mysql' | 'sqlserver', value: string) => {
+    if (database === 'mysql') {
+      setMysqlSearch(value);
+      setMysqlPage(1);
+    } else {
+      setSqlServerSearch(value);
+      setSqlServerPage(1);
     }
   }
-
-  useEffect(() => {
-    fetchData();
-  }, []);
 
   return (
     <div className="container mx-auto p-4">
@@ -166,24 +199,49 @@ export default function Home() {
               <Card>
                 <CardHeader>
                   <CardTitle>MySQL Data</CardTitle>
+                  <div className="flex items-center space-x-2">
+                    <Input
+                      placeholder="Search..."
+                      value={mysqlSearch}
+                      onChange={(e) => handleSearch('mysql', e.target.value)}
+                    />
+                    <Button onClick={() => mutateMysql()}>
+                      <Search className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </CardHeader>
                 <CardContent>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>PK</TableHead>
-                        <TableHead>Image Path</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {mysqlData.map((item) => (
-                        <TableRow key={item.pk}>
-                          <TableCell>{item.pk}</TableCell>
-                          <TableCell>{item.image}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                  {mysqlError ? (
+                    <Alert variant="destructive">
+                      <AlertCircle className="h-4 w-4" />
+                      <AlertTitle>Error</AlertTitle>
+                      <AlertDescription>Failed to load MySQL data</AlertDescription>
+                    </Alert>
+                  ) : !mysqlData ? (
+                    <div className="flex justify-center items-center h-32">
+                      <Loader2 className="h-8 w-8 animate-spin" />
+                    </div>
+                  ) : (
+                    <>
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>PK</TableHead>
+                            <TableHead>Image Path</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {mysqlData.data.map((item) => (
+                            <TableRow key={item.pk}>
+                              <TableCell>{item.pk}</TableCell>
+                              <TableCell>{item.image}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                      {renderPagination(mysqlData.page, mysqlData.total, setMysqlPage)}
+                    </>
+                  )}
                 </CardContent>
               </Card>
             </TabsContent>
@@ -193,22 +251,37 @@ export default function Home() {
                   <CardTitle>SQL Server Data</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>PK</TableHead>
-                        <TableHead>Image Path</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {sqlServerData.map((item) => (
-                        <TableRow key={item.pk}>
-                          <TableCell>{item.pk}</TableCell>
-                          <TableCell>{item.image}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                  {sqlServerError ? (
+                    <Alert variant="destructive">
+                      <AlertCircle className="h-4 w-4" />
+                      <AlertTitle>Error</AlertTitle>
+                      <AlertDescription>Failed to load SQL Server data</AlertDescription>
+                    </Alert>
+                  ) : !sqlServerData ? (
+                    <div className="flex justify-center items-center h-32">
+                      <Loader2 className="h-8 w-8 animate-spin" />
+                    </div>
+                  ) : (
+                    <>
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>PK</TableHead>
+                            <TableHead>Image Path</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {sqlServerData.data.map((item) => (
+                            <TableRow key={item.pk}>
+                              <TableCell>{item.pk}</TableCell>
+                              <TableCell>{item.image}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                      {renderPagination(sqlServerData.page, sqlServerData.total, setSqlServerPage)}
+                    </>
+                  )}
                 </CardContent>
               </Card>
             </TabsContent>
