@@ -6,8 +6,8 @@ export async function GET() {
     const data = await retrieveFromMySQL();
     return NextResponse.json(data);
   } catch (error) {
-    return NextResponse.json({ error: 'Failed to retrieve data' }, { status: 500 });
+    console.error('Error in /api/retrieve-mysql:', error);
+    return NextResponse.json({ error: 'Failed to retrieve data from MySQL' }, { status: 500 });
   }
 }
-
 
